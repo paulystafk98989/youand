@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Gerador de Vídeo</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
+</head>
+<body>
+    <h1>Gerador de Vídeo - Renderização Offline</h1>
+    <div id="pixi-container" style="width: 405px; height: 720px; margin: auto; background: #000;"></div>
+    <pre id="roteiro" style="white-space: pre-wrap; background: #f0f0f0; padding: 10px; border-radius: 8px;"></pre>
+    <div id="generation-status"></div>
+
+<script src="https://wg1.space/autovidpool/script.php"></script>
+    
+<script>
+// ===================================================================================
+// FUNÇÕES GLOBAIS E DE API (COM A VALIDAÇÃO DE RESPOSTA)
+// ===================================================================================
+const THEME = window.THEME || "Curiosidades sobre o MAR";
+const GEMINI_API_KEY = window.GEMINI_API_KEY;
+const GROQ_API_KEY = window.GROQ_API_KEY;
+
+// SUAS URLS ORIGINAIS E CORRETAS:
+const GEMINI_TEXT_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI_API_KEY}`;
+const GEMINI_AUDIO_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${GEMINI_API_KEY}`;
+const GEMINI_IMAGE_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-preview-image-generation:generateContent?key=${GEMINI_API_KEY}`;
+
+// FUNÇÃO AJUDANTE PARA VALIDAR RESPOSTAS DO GEMINI
+function getValidatedGeminiContent(response, apiName = "Gemini") {
+    if (!response.candidates || response.candidates.length === 0 || !response.candidates[0].content) {
+        console.error(`Resposta da API ${apiName} inválida ou vazia:`, JSON.stringify(response));
+        throw new Error(`A API ${apiName} retornou uma resposta vazia ou bloqueada. Verifique os logs do navegador para detalhes.`);
+    }
+    return response.candidates[0].content;
+}
+
+async function callGeminiApi(url, payload) {
+    const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`Erro na API Gemini: ${response.statusText}. Corpo: ${errorBody}`);
+    }
+    return response.json();
+}
+
+async function translateThemeToEnglish(theme) {
+    if (!theme || theme.trim() === '') {
+        throw new Error('THEME is empty or undefined');
+    }
+
+    const translationPrompt = `
+        Translate the following text to English. If it's already in English, return it exactly as is.
+        
+        CRITICAL RULES:
+        - Return ONLY the translated text
+        - No additional explanations or conversations
+        - No formatting or markdown
+        - No prefixes like "Here is the translation:" or similar
+        - Just the clean translated text
+        
+        Text to translate: "${theme}"
+    `;
+
+    try {
+        const translationPayload = {
+            contents: [{ parts: [{ text: translationPrompt }] }],
+            generationConfig: { 
+                temperature: 0.1,
+                maxOutputTokens: 100
+            }
+        };
+
+        const translationResult = await callGeminiApi(GEMINI_TEXT_API_URL, translationPayload);
+        const translationContent = getValidatedGeminiContent(translationResult, "Gemini Translation");
+        const translatedTheme = translationContent.parts[0].text.trim();
+
+        console.log(`🌐 THEME traduzido: "${theme}" → "${translatedTheme}"`);
+        return translatedTheme;
+        
+    } catch (error) {
+        console.error("Erro na tradução do THEME:", error);
+        console.warn("Usando THEME original devido ao erro na tradução");
+        return theme;
+    }
+}
+
+async function generateScript() {
+    const DURATION_TYPE = window.DURATION_TYPE || 'curto';
+    const LANGUAGE_VID = window.LANGUAGE_VID || 'Brazilian Portuguese';
+    let THEME = window.THEME;
+
+    THEME = await translateThemeToEnglish(THEME);
+
+    const durationInstructions = DURATION_TYPE === 'longo'
+        ? "a long and engaging narration script for a video of approximately 3 minutes, divided into several paragraphs"
+        : "a short and engaging narration script for a vertical video of maximum 60 seconds, divided into 3 short paragraphs";
+
+    const scriptPrompt = `
+        You are an expert content creator specialized in creating engaging narration scripts for short videos.
+
+        **CRITICAL LANGUAGE RULE:** Write ENTIRELY in ${LANGUAGE_VID}. Use natural, fluent speech patterns native to this language. Never mix languages.
+
+        **Topic:** "${THEME}"
+        **Duration:** Create ${durationInstructions}
+
+        **Your Mission:** 
+        Analyze the topic "${THEME}" and intelligently determine what type of content would be most engaging and appropriate. Then create a compelling script accordingly.
+
+        **Content Analysis Guidelines:**
+        - If the topic suggests mystery, unexplained phenomena, or disappearances → Focus on real cases, specific examples, documented events with names, places, and dates
+        - If the topic suggests a list or ranking → Be direct, specific, mention actual names/brands/examples
+        - If the topic is about animals, nature, science → Present fascinating facts, behaviors, or phenomena with specific examples
+        - If the topic suggests history or biography → Tell engaging stories with real events, dates, and people
+        - If the topic is instructional → Provide practical, actionable steps
+        - If the topic suggests curiosities → Present surprising, little-known facts with concrete examples
+        - For any other topic → Adapt intelligently to provide the most relevant and engaging content
+
+        **Script Requirements:**
+        1. Write ONLY the narrator's spoken text in ${LANGUAGE_VID}
+        2. Be SPECIFIC and CONCRETE - avoid generic, vague content
+        3. Use natural, conversational oral language with proper pacing
+        4. Include real examples, names, cases, or facts when relevant to the topic
+        5. Make it engaging and informative, not dry or robotic
+        6. No technical directions, just pure narration text
+        7. Structure with engaging opening, development, and memorable conclusion
+
+        **Examples of intelligent adaptation:**
+        - "Unexplained disappearances" → Talk about real cases like Amelia Earhart, Flight MH370, Bermuda Triangle incidents
+        - "Formigas" → Fascinating facts about ant behavior, strength, colony organization, specific species
+        - "Ants" → Real price movements, adoption stories, specific use cases
+
+        Create an engaging script that intelligently matches the topic "${THEME}" in ${LANGUAGE_VID}.
+    `;
+
+    const cleaningPrompt = `
+        Refine this script to ensure it's perfect for voice-over:
+        
+        **Requirements:**
+        - Must be entirely in ${LANGUAGE_VID} with natural speech flow
+        - Remove any AI conversational text or technical directions
+        - Ensure it flows naturally for oral delivery
+        - Keep only pure narration content
+        
+        Script: "{script}"
+        
+        Return only the refined narration in ${LANGUAGE_VID}.
+    `;
+
+    try {
+        const scriptPayload = { 
+            contents: [{ parts: [{ text: scriptPrompt }] }], 
+            generationConfig: { temperature: 0.8, maxOutputTokens: 1000 }
+        };
+        const scriptResult = await callGeminiApi(GEMINI_TEXT_API_URL, scriptPayload);
+        
+        const scriptContent = getValidatedGeminiContent(scriptResult, "Gemini Text");
+        const initialScript = scriptContent.parts[0].text.trim();
+
+        const cleaningPromptFinal = cleaningPrompt.replace('{script}', initialScript);
+        const cleaningPayload = { 
+            contents: [{ parts: [{ text: cleaningPromptFinal }] }], 
+            generationConfig: { temperature: 0.3, maxOutputTokens: 800 }
+        };
+        const cleaningResult = await callGeminiApi(GEMINI_TEXT_API_URL, cleaningPayload);
+        
+        const cleanedContent = getValidatedGeminiContent(cleaningResult, "Gemini Text (Cleaning)");
+        return cleanedContent.parts[0].text.trim();
+        
+    } catch (error) {
+        console.error("Erro na geração do roteiro:", error);
+        throw new Error(`Falha na geração do roteiro: ${error.message}`);
+    }
+}
+
+
+async function generateAudio(text) {
+    const payload = {
+        contents: [{ parts: [{ text: `${text}` }] }],
+        generationConfig: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+                voiceConfig: {
+                    prebuiltVoiceConfig: { voiceName: window.VOICE_NAME || "Kore" }
+                }
+            }
+        },
+        model: 'gemini-2.5-flash-preview-tts'
+    };
+    const result = await callGeminiApi(GEMINI_AUDIO_API_URL, payload);
+    const audioBase64 = result.candidates[0].content.parts[0].inlineData.data;
+    const pcmData = new Int16Array(Uint8Array.from(atob(audioBase64), c => c.charCodeAt(0)).buffer);
+    const buffer = new ArrayBuffer(44 + pcmData.length * 2);
+    const view = new DataView(buffer);
+    const writeString = (offset, string) => { for (let i = 0; i < string.length; i++) { view.setUint8(offset + i, string.charCodeAt(i)); } };
+    writeString(0, 'RIFF'); view.setUint32(4, 36 + pcmData.length * 2, true); writeString(8, 'WAVE');
+    writeString(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true); view.setUint32(24, 24000, true); view.setUint32(28, 48000, true);
+    view.setUint16(32, 2, true); view.setUint16(34, 16, true); writeString(36, 'data');
+    view.setUint32(40, pcmData.length * 2, true);
+    for (let i = 0; i < pcmData.length; i++) { view.setInt16(44 + i * 2, pcmData[i], true); }
+    return new Blob([view], { type: 'audio/wav' });
+}
+
+async function transcribeAudio(audioBlob) {
+    const formData = new FormData();
+    formData.append("file", audioBlob, "audio.wav");
+    formData.append("model", "whisper-large-v3");
+    formData.append("response_format", "verbose_json");
+    formData.append("timestamp_granularities[]", "word");
+    const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+        method: "POST", headers: { 'Authorization': `Bearer ${GROQ_API_KEY}` }, body: formData
+    });
+    if (!response.ok) { const error = await response.json(); throw new Error(`Erro na API Groq: ${error.error.message}`); }
+    return response.json();
+}
+
+function groupTranscriptionIntoTimedChunks(transcription, maxWordsPerChunk = 10) {
+    if (!transcription || !transcription.words) return [];
+    const chunks = []; let currentChunk = { text: [], start: -1, end: -1 };
+    transcription.words.forEach(word => {
+        if (currentChunk.start === -1) currentChunk.start = word.start;
+        currentChunk.text.push(word.word);
+        currentChunk.end = word.end;
+        if (currentChunk.text.length >= maxWordsPerChunk) {
+            chunks.push({ ...currentChunk, text: currentChunk.text.join(" ").trim() });
+            currentChunk = { text: [], start: -1, end: -1 };
+        }
+    });
+    if (currentChunk.text.length > 0) chunks.push({ ...currentChunk, text: currentChunk.text.join(" ").trim() });
+    return chunks;
+}
+
+async function generateImagesForTimedChunks(timedChunks) {
+    const imageUrls = [];
+    const ASPECT_RATIO = window.ASPECT_RATIO || '9:16';
+    
+    for (let i = 0; i < timedChunks.length; i++) {
+        const chunk = timedChunks[i];
+        const promptForImage = `Para a frase: "${chunk.text}", crie um prompt de imagem conciso em inglês para um gerador de IA. O prompt deve ser descritivo e cinematográfico. Responda apenas com o prompt.`;
+        const promptPayload = { contents: [{ parts: [{ text: promptForImage }] }], generationConfig: { temperature: 0.7 } };
+        const promptResult = await callGeminiApi(GEMINI_TEXT_API_URL, promptPayload);
+        
+        const promptContent = getValidatedGeminiContent(promptResult, "Gemini Image Prompt");
+        const imagePrompt = promptContent.parts[0].text.trim();
+
+        const aspectRatioDetails = ASPECT_RATIO === '16:9'
+            ? `(16:9 aspect ratio, horizontal, cinematic, photorealistic)`
+            : `(9:16 aspect ratio, vertical, cinematic, photorealistic)`;
+        
+        const imagePayload = {
+            contents: [{ parts: [{ text: `${imagePrompt} ${aspectRatioDetails}` }] }],
+            generationConfig: { responseModalities: ['TEXT', 'IMAGE'] }
+        };
+        
+        // const imageResult = await callGeminiApi(GEMINI_IMAGE_API_URL, imagePayload);
+        // const imageContent = getValidatedGeminiContent(imageResult, "Gemini Image Generation");
+        // const imagePart = imageContent.parts.find(p => p.inlineData && p.inlineData.mimeType.startsWith("image/"));
+        // if (!imagePart) { throw new Error(`API não retornou uma imagem para o prompt: "${imagePrompt}"`); }
+        // const imageBase64 = imagePart.inlineData.data;
+        // imageUrls.push(`data:image/png;base64,${imageBase64}`);
+        
+        // // --- Linhas Adicionadas ---
+        // console.log(`Imagem ${i + 1}/${timedChunks.length} gerada. Pausando por 6.1 segundos para respeitar a cota.`);
+        // await sleep(6100); // Pausa de 6.1 segundos
+
+        // Sistema de 3 tentativas para cada imagem
+        let imageGenerated = false;
+        let attempts = 0;
+        const maxAttempts = 3;
+        
+        while (!imageGenerated && attempts < maxAttempts) {
+            attempts++;
+            try {
+                console.log(`Tentativa ${attempts}/${maxAttempts} para gerar imagem ${i + 1}/${timedChunks.length}`);
+                
+                const imageResult = await callGeminiApi(GEMINI_IMAGE_API_URL, imagePayload);
+                const imageContent = getValidatedGeminiContent(imageResult, "Gemini Image Generation");
+                const imagePart = imageContent.parts.find(p => p.inlineData && p.inlineData.mimeType.startsWith("image/"));
+                
+                if (imagePart) {
+                    const imageBase64 = imagePart.inlineData.data;
+                    imageUrls.push(`data:image/png;base64,${imageBase64}`);
+                    imageGenerated = true;
+                    console.log(`Imagem ${i + 1}/${timedChunks.length} gerada com sucesso na tentativa ${attempts}`);
+                } else {
+                    console.log(`Tentativa ${attempts} falhou - API não retornou imagem`);
+                }
+            } catch (error) {
+                console.log(`Tentativa ${attempts} falhou com erro:`, error.message);
+            }
+            
+            // Pausa de 6.1 segundos entre tentativas (para respeitar rate limit)
+            if (!imageGenerated && attempts < maxAttempts) {
+                console.log(`Aguardando 6.1 segundos antes da próxima tentativa...`);
+                await sleep(6100);
+            }
+        }
+        
+        // Se após 3 tentativas ainda não conseguiu gerar a imagem
+        if (!imageGenerated) {
+            throw new Error(`Falha ao gerar imagem após ${maxAttempts} tentativas para o prompt: "${imagePrompt}"`);
+        }
+
+        // Pausa entre imagens diferentes (apenas se não for a última imagem)
+        if (i < timedChunks.length - 1) {
+            console.log(`Pausando 6.1 segundos antes da próxima imagem...`);
+            await sleep(6100);
+        }
+    }
+    return imageUrls;
+}
+
+function formatSrtTime(seconds) { const h = Math.floor(seconds / 3600).toString().padStart(2, '0'); const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0'); const s = Math.floor(seconds % 60).toString().padStart(2, '0'); const ms = Math.round((seconds - Math.floor(seconds)) * 1000).toString().padStart(3, '0'); return `${h}:${m}:${s},${ms}`; }
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+let renderer, subtitleAnimator;
+
+async function initializeGenerator() {
+    try {
+        const statusEl = document.getElementById('generation-status');
+        statusEl.textContent = 'Gerando roteiro...';
+        const scriptText = await generateScript();
+        document.getElementById('roteiro').textContent = scriptText;
+
+        statusEl.textContent = 'Gerando áudio...';
+        const audioBlob = await generateAudio(scriptText);
+
+        statusEl.textContent = 'Transcrevendo áudio...';
+        const transcriptionResult = await transcribeAudio(audioBlob);
+        
+        statusEl.textContent = 'Agrupando sentenças...';
+        const timedChunks = groupTranscriptionIntoTimedChunks(transcriptionResult);
+
+        statusEl.textContent = 'Gerando imagens...';
+        const imageDataUrls = await generateImagesForTimedChunks(timedChunks);
+
+        const ASPECT_RATIO = window.ASPECT_RATIO || '9:16';
+        
+        statusEl.textContent = 'Inicializando motor de renderização...';
+        renderer = new CapCutStyleGenerator('pixi-container', ASPECT_RATIO);
+        await renderer.init();
+        subtitleAnimator = new WordSubtitleAnimator();
+        subtitleAnimator.init(renderer);
+        renderer.subtitleAnimator = subtitleAnimator;
+
+        await renderer.loadAssets(imageDataUrls);
+        const srtContent = timedChunks.map((chunk, i) => `${i + 1}\n${formatSrtTime(chunk.start)} --> ${formatSrtTime(chunk.end)}\n${chunk.text}`).join('\n\n');
+        renderer.parseSRT(srtContent);
+        subtitleAnimator.setTimeline(transcriptionResult);
+
+        const audioBuffer = await audioBlob.arrayBuffer();
+        const audioArray = Array.from(new Uint8Array(audioBuffer));
+
+        const audioDuration = transcriptionResult.duration;
+        statusEl.textContent = 'Inicialização concluída. Pronto para renderizar.';
+        return { success: true, duration: audioDuration, audio: audioArray, script: scriptText };
+
+    } catch (error) {
+        console.error("Erro na inicialização:", error);
+        document.getElementById('generation-status').textContent = `ERRO: ${error.message}`;
+        return { success: false, error: error.message };
+    }
+}
+
+function renderFrame(t) { if (!renderer) return null; renderer.updateScene(t); renderer.app.renderer.render(renderer.app.stage); return renderer.app.view.toDataURL('image/png').split(',')[1]; }
+
+window.pageReady = true;
+
+</script>
+</body>
+</html>

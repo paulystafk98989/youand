@@ -1,0 +1,20 @@
+{
+  "name": "autovid-panel",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "generate": "node puppeteer-script.js",
+    "upload": "node youtube-uploader.js"
+  },
+  "dependencies": {
+    "puppeteer": "^21.0.0",
+    "googleapis": "^128.0.0",
+    "express": "^4.19.2",
+    "express-basic-auth": "^1.2.1",
+    "body-parser": "^1.20.2",
+    "node-cron": "^3.0.3",
+    "dotenv": "^16.4.5",
+    "ejs": "^3.1.10"
+  }
+}
