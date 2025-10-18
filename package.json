@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node server.js",
     "generate": "node puppeteer-script.js",
-    "upload": "node youtube-uploader.js"
+    "upload": "node youtube-uploader.js",
+    "meta": "node meta-automation.js"
   },
   "dependencies": {
     "puppeteer": "^21.0.0",
